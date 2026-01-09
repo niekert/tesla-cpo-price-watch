@@ -1,5 +1,5 @@
 import { watchConfigs } from "@/config";
-import { scrapeAllUrls } from "@/lib/kernel";
+import { scrapeAllUrls, ScrapeResult } from "@/lib/kernel";
 import {
   computeChanges,
   getAllStoredVehicles,
@@ -14,12 +14,12 @@ import {
 } from "@/lib/types";
 import { FatalError } from "workflow";
 
-async function scrapeVehicles(configs: WatchConfig[]): Promise<Vehicle[]> {
+async function scrapeVehicles(configs: WatchConfig[]): Promise<ScrapeResult> {
   "use step";
   console.log(`Scraping ${configs.length} Tesla URLs...`);
-  const vehicles = await scrapeAllUrls(configs);
-  console.log(`Found ${vehicles.length} vehicles`);
-  return vehicles;
+  const result = await scrapeAllUrls(configs);
+  console.log(`Found ${result.vehicles.length} vehicles`);
+  return result;
 }
 
 async function getStoredVehicles(): Promise<StoredVehicle[]> {
@@ -29,11 +29,12 @@ async function getStoredVehicles(): Promise<StoredVehicle[]> {
 
 async function compareWithStored(
   vehicles: Vehicle[],
-  storedVehicles: StoredVehicle[]
+  storedVehicles: StoredVehicle[],
+  skipModels: string[]
 ): Promise<VehicleChange[]> {
   "use step";
   console.log("Comparing with stored prices...");
-  const changes = await computeChanges(vehicles, storedVehicles);
+  const changes = await computeChanges(vehicles, storedVehicles, skipModels);
   console.log(`Detected ${changes.length} changes`);
   return changes;
 }
@@ -54,10 +55,13 @@ async function notifyChanges(
   console.log("Notifications sent");
 }
 
-async function persistPrices(vehicles: Vehicle[]): Promise<void> {
+async function persistPrices(
+  vehicles: Vehicle[],
+  skipModels: string[]
+): Promise<void> {
   "use step";
   console.log("Updating stored prices...");
-  await updateStorage(vehicles);
+  await updateStorage(vehicles, skipModels);
   console.log("Storage updated");
 }
 
@@ -81,7 +85,7 @@ export async function checkPricesWorkflow(): Promise<{
 
   try {
     // Step 1: Scrape Tesla inventory pages
-    const vehicles = await scrapeVehicles(watchConfigs);
+    const { vehicles, failedModels } = await scrapeVehicles(watchConfigs);
 
     if (vehicles.length === 0) {
       console.log("No vehicles found - skipping further steps");
@@ -91,14 +95,14 @@ export async function checkPricesWorkflow(): Promise<{
     // Step: Get stored vehicles
     const storedVehicles = await getStoredVehicles();
 
-    // Step 3: Compare with stored prices to detect changes
-    const changes = await compareWithStored(vehicles, storedVehicles);
+    // Step 3: Compare with stored prices to detect changes (skip failed models)
+    const changes = await compareWithStored(vehicles, storedVehicles, failedModels);
 
     // Step 4: Send notifications for any changes
     await notifyChanges(changes, vehicles.length);
 
-    // Step 5: Update stored prices
-    await persistPrices(vehicles);
+    // Step 5: Update stored prices (skip failed models)
+    await persistPrices(vehicles, failedModels);
 
     return { vehicleCount: vehicles.length, changeCount: changes.length };
   } catch (error) {

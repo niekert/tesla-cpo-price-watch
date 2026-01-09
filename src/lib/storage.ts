@@ -15,11 +15,13 @@ export function isAvailableSoon(location: string): boolean {
 
 export function computeChanges(
   currentVehicles: Vehicle[],
-  storedVehicles: StoredVehicle[]
+  storedVehicles: StoredVehicle[],
+  skipModels: string[] = []
 ): VehicleChange[] {
   const changes: VehicleChange[] = [];
   const currentVins = new Set(currentVehicles.map((v) => v.vin));
   const storedVinsMap = new Map(storedVehicles.map((v) => [v.vin, v]));
+  const skipModelsSet = new Set(skipModels);
 
   // Check for new arrivals, price changes, and availability changes
   for (const vehicle of currentVehicles) {
@@ -57,9 +59,9 @@ export function computeChanges(
     }
   }
 
-  // Check for removed vehicles
+  // Check for removed vehicles (skip models that failed to scrape)
   for (const stored of storedVehicles) {
-    if (!currentVins.has(stored.vin)) {
+    if (!currentVins.has(stored.vin) && !skipModelsSet.has(stored.model)) {
       const removed: VehicleRemoved = {
         vehicle: stored,
         type: "removed",
@@ -134,16 +136,20 @@ export async function removeVehicle(vin: string): Promise<void> {
   await redis.srem(VEHICLES_KEY, vin);
 }
 
-export async function updateStorage(currentVehicles: Vehicle[]): Promise<void> {
+export async function updateStorage(
+  currentVehicles: Vehicle[],
+  skipModels: string[] = []
+): Promise<void> {
   const storedVehicles = await getAllStoredVehicles();
   const currentVins = new Set(currentVehicles.map((v) => v.vin));
+  const skipModelsSet = new Set(skipModels);
 
   // Store/update current vehicles
   await Promise.all(currentVehicles.map((v) => storeVehicle(v)));
 
-  // Remove vehicles no longer in inventory
+  // Remove vehicles no longer in inventory (skip models that failed to scrape)
   for (const stored of storedVehicles) {
-    if (!currentVins.has(stored.vin)) {
+    if (!currentVins.has(stored.vin) && !skipModelsSet.has(stored.model)) {
       await removeVehicle(stored.vin);
     }
   }

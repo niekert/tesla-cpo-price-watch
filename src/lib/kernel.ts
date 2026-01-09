@@ -161,9 +161,14 @@ export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
   }
 }
 
+export interface ScrapeResult {
+  vehicles: Vehicle[];
+  failedModels: string[];
+}
+
 export async function scrapeAllUrls(
   configs: WatchConfig[]
-): Promise<Vehicle[]> {
+): Promise<ScrapeResult> {
   const allVehicles: Vehicle[] = [];
   const errors: { config: WatchConfig; error: unknown }[] = [];
 
@@ -202,5 +207,8 @@ export async function scrapeAllUrls(
     new Map(allVehicles.map((v) => [v.vin, v])).values()
   );
 
-  return uniqueVehicles;
+  return {
+    vehicles: uniqueVehicles,
+    failedModels: errors.map((e) => e.config.name),
+  };
 }
