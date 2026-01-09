@@ -1,16 +1,16 @@
-import { Redis } from '@upstash/redis';
+import { Redis } from "@upstash/redis";
 import {
-  Vehicle,
-  StoredVehicle,
-  VehicleChange,
-  PriceChange,
-  NewArrival,
-  VehicleRemoved,
   AvailabilityChange,
-} from './types';
+  NewArrival,
+  PriceChange,
+  StoredVehicle,
+  Vehicle,
+  VehicleChange,
+  VehicleRemoved,
+} from "./types";
 
 export function isAvailableSoon(location: string): boolean {
-  return location.toLowerCase().startsWith('binnenkort');
+  return location.toLowerCase().startsWith("binnenkort");
 }
 
 export function computeChanges(
@@ -29,7 +29,7 @@ export function computeChanges(
       // New arrival
       const newArrival: NewArrival = {
         vehicle,
-        type: 'new_arrival',
+        type: "new_arrival",
       };
       changes.push(newArrival);
     } else if (stored.price !== vehicle.price) {
@@ -41,14 +41,17 @@ export function computeChanges(
         currentPrice: vehicle.price,
         changeAmount,
         changePercent: (changeAmount / stored.price) * 100,
-        type: changeAmount < 0 ? 'price_drop' : 'price_increase',
+        type: changeAmount < 0 ? "price_drop" : "price_increase",
       };
       changes.push(priceChange);
-    } else if (isAvailableSoon(stored.location) && !isAvailableSoon(vehicle.location)) {
+    } else if (
+      isAvailableSoon(stored.location) &&
+      !isAvailableSoon(vehicle.location)
+    ) {
       // Availability changed from "binnenkort" to "nu"
       const availabilityChange: AvailabilityChange = {
         vehicle,
-        type: 'now_available',
+        type: "now_available",
       };
       changes.push(availabilityChange);
     }
@@ -59,7 +62,7 @@ export function computeChanges(
     if (!currentVins.has(stored.vin)) {
       const removed: VehicleRemoved = {
         vehicle: stored,
-        type: 'removed',
+        type: "removed",
       };
       changes.push(removed);
     }
@@ -80,10 +83,12 @@ function getRedis(): Redis {
   return _redis;
 }
 
-const VEHICLES_KEY = 'vehicles';
-const VEHICLE_PREFIX = 'vehicle:';
+const VEHICLES_KEY = "vehicles";
+const VEHICLE_PREFIX = "vehicle:";
 
-export async function getStoredVehicle(vin: string): Promise<StoredVehicle | null> {
+export async function getStoredVehicle(
+  vin: string
+): Promise<StoredVehicle | null> {
   return getRedis().get<StoredVehicle>(`${VEHICLE_PREFIX}${vin}`);
 }
 
@@ -127,11 +132,6 @@ export async function removeVehicle(vin: string): Promise<void> {
   const redis = getRedis();
   await redis.del(`${VEHICLE_PREFIX}${vin}`);
   await redis.srem(VEHICLES_KEY, vin);
-}
-
-export async function detectChanges(currentVehicles: Vehicle[]): Promise<VehicleChange[]> {
-  const storedVehicles = await getAllStoredVehicles();
-  return computeChanges(currentVehicles, storedVehicles);
 }
 
 export async function updateStorage(currentVehicles: Vehicle[]): Promise<void> {
