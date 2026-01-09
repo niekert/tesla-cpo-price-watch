@@ -1,4 +1,4 @@
-import { VehicleChange, PriceChange, NewArrival, VehicleRemoved } from './types';
+import { VehicleChange, PriceChange, NewArrival, VehicleRemoved, AvailabilityChange } from './types';
 
 function formatPrice(price: number, currency: string): string {
   return new Intl.NumberFormat('nl-NL', {
@@ -62,6 +62,21 @@ ${formatVehicleInfo(vehicle)}
 _This vehicle was removed from inventory_`;
 }
 
+function formatAvailabilityChange(change: AvailabilityChange): string {
+  const { vehicle } = change;
+
+  return `🚗 *Now Available for Pickup!*
+
+${formatVehicleInfo(vehicle)}
+📍 ${vehicle.location}
+💰 ${formatPrice(vehicle.price, vehicle.currency)}
+🛣️ ${formatMileage(vehicle.mileage)} km
+
+_Was "Binnenkort op te halen", now ready!_
+
+[View on Tesla](${vehicle.url})`;
+}
+
 function formatMessage(change: VehicleChange): string {
   switch (change.type) {
     case 'price_drop':
@@ -71,6 +86,8 @@ function formatMessage(change: VehicleChange): string {
       return formatNewArrival(change);
     case 'removed':
       return formatRemoved(change);
+    case 'now_available':
+      return formatAvailabilityChange(change);
   }
 }
 

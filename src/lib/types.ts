@@ -38,7 +38,12 @@ export interface VehicleRemoved {
   type: 'removed';
 }
 
-export type VehicleChange = PriceChange | NewArrival | VehicleRemoved;
+export interface AvailabilityChange {
+  vehicle: Vehicle;
+  type: 'now_available';
+}
+
+export type VehicleChange = PriceChange | NewArrival | VehicleRemoved | AvailabilityChange;
 
 export interface WatchConfig {
   name: string;

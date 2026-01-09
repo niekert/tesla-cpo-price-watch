@@ -6,7 +6,67 @@ import {
   PriceChange,
   NewArrival,
   VehicleRemoved,
+  AvailabilityChange,
 } from './types';
+
+export function isAvailableSoon(location: string): boolean {
+  return location.toLowerCase().startsWith('binnenkort');
+}
+
+export function computeChanges(
+  currentVehicles: Vehicle[],
+  storedVehicles: StoredVehicle[]
+): VehicleChange[] {
+  const changes: VehicleChange[] = [];
+  const currentVins = new Set(currentVehicles.map((v) => v.vin));
+  const storedVinsMap = new Map(storedVehicles.map((v) => [v.vin, v]));
+
+  // Check for new arrivals, price changes, and availability changes
+  for (const vehicle of currentVehicles) {
+    const stored = storedVinsMap.get(vehicle.vin);
+
+    if (!stored) {
+      // New arrival
+      const newArrival: NewArrival = {
+        vehicle,
+        type: 'new_arrival',
+      };
+      changes.push(newArrival);
+    } else if (stored.price !== vehicle.price) {
+      // Price changed
+      const changeAmount = vehicle.price - stored.price;
+      const priceChange: PriceChange = {
+        vehicle,
+        previousPrice: stored.price,
+        currentPrice: vehicle.price,
+        changeAmount,
+        changePercent: (changeAmount / stored.price) * 100,
+        type: changeAmount < 0 ? 'price_drop' : 'price_increase',
+      };
+      changes.push(priceChange);
+    } else if (isAvailableSoon(stored.location) && !isAvailableSoon(vehicle.location)) {
+      // Availability changed from "binnenkort" to "nu"
+      const availabilityChange: AvailabilityChange = {
+        vehicle,
+        type: 'now_available',
+      };
+      changes.push(availabilityChange);
+    }
+  }
+
+  // Check for removed vehicles
+  for (const stored of storedVehicles) {
+    if (!currentVins.has(stored.vin)) {
+      const removed: VehicleRemoved = {
+        vehicle: stored,
+        type: 'removed',
+      };
+      changes.push(removed);
+    }
+  }
+
+  return changes;
+}
 
 // Lazy initialize Redis client to avoid build-time errors
 let _redis: Redis | null = null;
@@ -70,49 +130,8 @@ export async function removeVehicle(vin: string): Promise<void> {
 }
 
 export async function detectChanges(currentVehicles: Vehicle[]): Promise<VehicleChange[]> {
-  const changes: VehicleChange[] = [];
   const storedVehicles = await getAllStoredVehicles();
-  const currentVins = new Set(currentVehicles.map((v) => v.vin));
-  const storedVinsMap = new Map(storedVehicles.map((v) => [v.vin, v]));
-
-  // Check for new arrivals and price changes
-  for (const vehicle of currentVehicles) {
-    const stored = storedVinsMap.get(vehicle.vin);
-
-    if (!stored) {
-      // New arrival
-      const newArrival: NewArrival = {
-        vehicle,
-        type: 'new_arrival',
-      };
-      changes.push(newArrival);
-    } else if (stored.price !== vehicle.price) {
-      // Price changed
-      const changeAmount = vehicle.price - stored.price;
-      const priceChange: PriceChange = {
-        vehicle,
-        previousPrice: stored.price,
-        currentPrice: vehicle.price,
-        changeAmount,
-        changePercent: (changeAmount / stored.price) * 100,
-        type: changeAmount < 0 ? 'price_drop' : 'price_increase',
-      };
-      changes.push(priceChange);
-    }
-  }
-
-  // Check for removed vehicles
-  for (const stored of storedVehicles) {
-    if (!currentVins.has(stored.vin)) {
-      const removed: VehicleRemoved = {
-        vehicle: stored,
-        type: 'removed',
-      };
-      changes.push(removed);
-    }
-  }
-
-  return changes;
+  return computeChanges(currentVehicles, storedVehicles);
 }
 
 export async function updateStorage(currentVehicles: Vehicle[]): Promise<void> {
