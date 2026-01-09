@@ -22,7 +22,7 @@ async function scrapeVehicles(configs: WatchConfig[]): Promise<Vehicle[]> {
   return vehicles;
 }
 
-export function getStoredVehicles(): Promise<StoredVehicle[]> {
+async function getStoredVehicles(): Promise<StoredVehicle[]> {
   "use step";
   return getAllStoredVehicles();
 }
