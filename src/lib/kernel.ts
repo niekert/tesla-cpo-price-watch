@@ -1,6 +1,7 @@
 import Kernel from '@onkernel/sdk';
 import { chromium, Page } from 'playwright';
 import { Vehicle, WatchConfig } from './types';
+import { extractVehiclesFromDOM, ScrapedVehicle } from './scraper';
 
 // Lazy initialize Kernel client to avoid build-time errors
 let _kernel: Kernel | null = null;
@@ -61,7 +62,7 @@ async function extractVehiclesFromPage(page: Page, config: WatchConfig): Promise
       }
 
       // Method 2: Try DOM scraping
-      const domVehicles = await tryExtractFromDOM(page, config);
+      const domVehicles = await tryExtractFromDOM(page);
       if (domVehicles.length > 0) {
         return domVehicles;
       }
@@ -108,80 +109,21 @@ async function tryExtractFromPageState(page: Page, config: WatchConfig): Promise
   return results.map(item => parseVehicle(item, config));
 }
 
-async function tryExtractFromDOM(page: Page, config: WatchConfig): Promise<Vehicle[]> {
-  return page.evaluate((configName: string) => {
-    const vehicles: Array<{
-      vin: string;
-      model: string;
-      variant: string;
-      price: number;
-      currency: string;
-      mileage: number;
-      location: string;
-      url: string;
-    }> = [];
+async function tryExtractFromDOM(page: Page): Promise<Vehicle[]> {
+  // Pass the function source to evaluate - it runs in browser context
+  const scraped = await page.evaluate(extractVehiclesFromDOM);
 
-    // Tesla uses article.result.card with data-id for each vehicle
-    const cards = document.querySelectorAll('article.result.card[data-id]');
-
-    for (const card of cards) {
-      // Extract VIN from data-id (may have suffix like "-search-result-container")
-      const dataId = card.getAttribute('data-id');
-      if (!dataId) continue;
-
-      // VIN is everything before the first dash
-      const vin = dataId.split('-')[0];
-
-      // Skip if not a valid VIN (VINs are 17 chars alphanumeric)
-      if (vin.length !== 17) continue;
-
-      // Extract location from .inventory-card-chip
-      const locationEl = card.querySelector('.inventory-card-chip');
-      const location = locationEl?.textContent?.trim() || '';
-
-      // Extract details from .card-info-details (contains price, km, etc)
-      const detailsEl = card.querySelector('.card-info-details');
-      const details = detailsEl?.textContent?.trim() || '';
-
-      // Try to extract price from details or other elements
-      let price = 0;
-      const priceMatch = details.match(/€\s*([\d.,]+)/);
-      if (priceMatch) {
-        price = parseInt(priceMatch[1].replace(/[.,]/g, ''), 10);
-      }
-
-      // Try to extract mileage from details
-      let mileage = 0;
-      const kmMatch = details.match(/([\d.,]+)\s*km/i);
-      if (kmMatch) {
-        mileage = parseInt(kmMatch[1].replace(/[.,]/g, ''), 10);
-      }
-
-      // Determine URL based on model type (m3 or my)
-      const isModelY = configName.toLowerCase().includes('model y') || configName.toLowerCase().includes('my');
-      const modelPath = isModelY ? 'my' : 'm3';
-      const url = `https://www.tesla.com/nl_NL/${modelPath}/order/${vin}`;
-
-      // Use details as variant info
-      const variant = details || configName;
-
-      // Avoid duplicates
-      if (!vehicles.find(v => v.vin === vin)) {
-        vehicles.push({
-          vin,
-          model: configName,
-          variant,
-          price,
-          currency: 'EUR',
-          mileage,
-          location,
-          url,
-        });
-      }
-    }
-
-    return vehicles;
-  }, config.name);
+  // Convert ScrapedVehicle to Vehicle (add variant field)
+  return scraped.map((v: ScrapedVehicle): Vehicle => ({
+    vin: v.vin,
+    model: v.model,
+    variant: v.year ? `${v.year}` : v.model,
+    price: v.price,
+    currency: v.currency,
+    mileage: v.mileage,
+    location: v.location,
+    url: v.url,
+  }));
 }
 
 function extractResults(data: unknown): TeslaInventoryItem[] {
