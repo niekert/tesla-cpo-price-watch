@@ -27,63 +27,161 @@ interface TeslaInventoryItem {
   VehicleDetailUrl?: string;
 }
 
-async function extractVehiclesFromPage(page: Page, config: WatchConfig): Promise<Vehicle[]> {
-  const vehicles: Vehicle[] = [];
+async function waitForPageStable(page: Page, timeout = 10000): Promise<void> {
+  const startTime = Date.now();
+  let lastContent = 0;
 
-  // Wait for the page to load Tesla's inventory data
-  // Tesla loads inventory data via JavaScript into window.__PRELOADED_STATE__ or as JSON in script tags
-  await page.waitForLoadState('networkidle');
-
-  // Try to extract inventory data from the page
-  const inventoryData = await page.evaluate(() => {
-    // Tesla stores inventory in various places depending on the page version
-    // Method 1: Check for __PRELOADED_STATE__
-    const preloadedState = (window as unknown as { __PRELOADED_STATE__?: unknown }).__PRELOADED_STATE__;
-    if (preloadedState) {
-      return preloadedState;
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(500);
+    try {
+      const currentContent = await page.evaluate(() => document.body?.innerHTML?.length || 0);
+      if (currentContent === lastContent && currentContent > 1000) {
+        // Page content stabilized
+        return;
+      }
+      lastContent = currentContent;
+    } catch {
+      // Context might be destroyed during navigation, wait and retry
+      await page.waitForTimeout(500);
     }
+  }
+}
 
-    // Method 2: Look for JSON data in script tags
-    const scripts = document.querySelectorAll('script');
+async function extractVehiclesFromPage(page: Page, config: WatchConfig): Promise<Vehicle[]> {
+  // Wait for page to stabilize after any redirects/navigation
+  await waitForPageStable(page);
+
+  // Try multiple extraction methods with retries
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // Method 1: Try to intercept network response (most reliable)
+      const vehicles = await tryExtractFromPageState(page, config);
+      if (vehicles.length > 0) {
+        return vehicles;
+      }
+
+      // Method 2: Try DOM scraping
+      const domVehicles = await tryExtractFromDOM(page, config);
+      if (domVehicles.length > 0) {
+        return domVehicles;
+      }
+
+      // Wait before retry
+      await page.waitForTimeout(2000);
+    } catch (error) {
+      console.log(`Extraction attempt ${attempt + 1} failed:`, error);
+      await page.waitForTimeout(1000);
+    }
+  }
+
+  return [];
+}
+
+async function tryExtractFromPageState(page: Page, config: WatchConfig): Promise<Vehicle[]> {
+  const inventoryData = await page.evaluate(() => {
+    // Tesla stores inventory in various places
+    const win = window as unknown as Record<string, unknown>;
+
+    // Check common Tesla data stores
+    if (win.__PRELOADED_STATE__) return win.__PRELOADED_STATE__;
+    if (win.__ds_state__) return win.__ds_state__;
+    if (win.__NEXT_DATA__) return win.__NEXT_DATA__;
+
+    // Look for JSON in script tags
+    const scripts = document.querySelectorAll('script:not([src])');
     for (const script of scripts) {
       const content = script.textContent || '';
-      if (content.includes('results') && content.includes('VIN')) {
+      if (content.includes('"VIN"') && content.includes('"results"')) {
         try {
-          // Try to find JSON object in script
-          const match = content.match(/\{[\s\S]*"results"[\s\S]*\}/);
-          if (match) {
-            return JSON.parse(match[0]);
-          }
-        } catch {
-          // Continue to next script
-        }
+          const match = content.match(/\{[^{}]*"results"\s*:\s*\[[^\]]*\][^{}]*\}/);
+          if (match) return JSON.parse(match[0]);
+        } catch { /* continue */ }
       }
-    }
-
-    // Method 3: Extract from API response stored in window
-    const dsState = (window as unknown as { __ds_state__?: unknown }).__ds_state__;
-    if (dsState) {
-      return dsState;
     }
 
     return null;
   });
 
-  // Parse the inventory data
-  if (inventoryData) {
-    const results = extractResults(inventoryData);
-    for (const item of results) {
-      vehicles.push(parseVehicle(item, config));
+  if (!inventoryData) return [];
+
+  const results = extractResults(inventoryData);
+  return results.map(item => parseVehicle(item, config));
+}
+
+async function tryExtractFromDOM(page: Page, config: WatchConfig): Promise<Vehicle[]> {
+  return page.evaluate((configName: string) => {
+    const vehicles: Array<{
+      vin: string;
+      model: string;
+      variant: string;
+      price: number;
+      currency: string;
+      mileage: number;
+      location: string;
+      url: string;
+    }> = [];
+
+    // Tesla uses article.result.card with data-id for each vehicle
+    const cards = document.querySelectorAll('article.result.card[data-id]');
+
+    for (const card of cards) {
+      // Extract VIN from data-id (may have suffix like "-search-result-container")
+      const dataId = card.getAttribute('data-id');
+      if (!dataId) continue;
+
+      // VIN is everything before the first dash
+      const vin = dataId.split('-')[0];
+
+      // Skip if not a valid VIN (VINs are 17 chars alphanumeric)
+      if (vin.length !== 17) continue;
+
+      // Extract location from .inventory-card-chip
+      const locationEl = card.querySelector('.inventory-card-chip');
+      const location = locationEl?.textContent?.trim() || '';
+
+      // Extract details from .card-info-details (contains price, km, etc)
+      const detailsEl = card.querySelector('.card-info-details');
+      const details = detailsEl?.textContent?.trim() || '';
+
+      // Try to extract price from details or other elements
+      let price = 0;
+      const priceMatch = details.match(/€\s*([\d.,]+)/);
+      if (priceMatch) {
+        price = parseInt(priceMatch[1].replace(/[.,]/g, ''), 10);
+      }
+
+      // Try to extract mileage from details
+      let mileage = 0;
+      const kmMatch = details.match(/([\d.,]+)\s*km/i);
+      if (kmMatch) {
+        mileage = parseInt(kmMatch[1].replace(/[.,]/g, ''), 10);
+      }
+
+      // Determine URL based on model type (m3 or my)
+      const isModelY = configName.toLowerCase().includes('model y') || configName.toLowerCase().includes('my');
+      const modelPath = isModelY ? 'my' : 'm3';
+      const url = `https://www.tesla.com/nl_NL/${modelPath}/order/${vin}`;
+
+      // Use details as variant info
+      const variant = details || configName;
+
+      // Avoid duplicates
+      if (!vehicles.find(v => v.vin === vin)) {
+        vehicles.push({
+          vin,
+          model: configName,
+          variant,
+          price,
+          currency: 'EUR',
+          mileage,
+          location,
+          url,
+        });
+      }
     }
-  }
 
-  // Fallback: scrape visible cards if no structured data found
-  if (vehicles.length === 0) {
-    const scrapedVehicles = await scrapeVisibleCards(page, config);
-    vehicles.push(...scrapedVehicles);
-  }
-
-  return vehicles;
+    return vehicles;
+  }, config.name);
 }
 
 function extractResults(data: unknown): TeslaInventoryItem[] {
@@ -146,60 +244,6 @@ function parseVehicle(item: TeslaInventoryItem, config: WatchConfig): Vehicle {
   };
 }
 
-async function scrapeVisibleCards(page: Page, config: WatchConfig): Promise<Vehicle[]> {
-  // Fallback scraping method - extract from DOM if API data not available
-  const vehicles = await page.evaluate((configName: string) => {
-    const cards = document.querySelectorAll('[data-id], .result-card, .inventory-card');
-    const results: Array<{
-      vin: string;
-      model: string;
-      variant: string;
-      price: number;
-      currency: string;
-      mileage: number;
-      location: string;
-      url: string;
-    }> = [];
-
-    for (const card of cards) {
-      const vin =
-        card.getAttribute('data-id') ||
-        card.getAttribute('data-vin') ||
-        card.querySelector('[data-vin]')?.getAttribute('data-vin');
-
-      if (!vin) continue;
-
-      const priceEl = card.querySelector('.result-purchase-price, .price, [data-price]');
-      const priceText = priceEl?.textContent || '0';
-      const price = parseInt(priceText.replace(/[^0-9]/g, ''), 10) || 0;
-
-      const titleEl = card.querySelector('.result-basic-info h3, .title, .model-name');
-      const title = titleEl?.textContent?.trim() || configName;
-
-      const locationEl = card.querySelector('.result-basic-info .tds-text--caption, .location');
-      const location = locationEl?.textContent?.trim() || '';
-
-      const link = card.querySelector('a[href*="/inventory/"]') as HTMLAnchorElement | null;
-      const url = link?.href || `https://www.tesla.com/inventory/used/${vin}`;
-
-      results.push({
-        vin,
-        model: configName,
-        variant: title,
-        price,
-        currency: 'EUR',
-        mileage: 0,
-        location,
-        url,
-      });
-    }
-
-    return results;
-  }, config.name);
-
-  return vehicles;
-}
-
 export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
   let kernelBrowser;
   let browser;
@@ -218,28 +262,87 @@ export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
     const context = browser.contexts()[0] || (await browser.newContext());
     const page = context.pages()[0] || (await context.newPage());
 
+    // Set a longer timeout for navigation
+    page.setDefaultTimeout(60000);
+
     // Navigate to Tesla inventory
+    console.log(`Navigating to ${config.url}`);
     await page.goto(config.url, {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
 
-    // Wait for inventory to load
+    // Wait for initial load
     await page.waitForTimeout(3000);
+
+    // Dismiss cookie banner if present
+    try {
+      const acceptButton = page.locator('button:has-text("Accepteren")');
+      if (await acceptButton.count() > 0) {
+        console.log('Dismissing cookie banner...');
+        await acceptButton.click();
+        await page.waitForTimeout(1000);
+      }
+    } catch { /* ignore */ }
+
+    // Dismiss locale modal by pressing Escape
+    try {
+      const dialog = page.locator('dialog');
+      if (await dialog.count() > 0 && await dialog.isVisible()) {
+        console.log('Dismissing locale modal...');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+      }
+    } catch { /* ignore */ }
+
+    // Apply year filter if configured
+    if (config.minYear) {
+      console.log(`Applying year filter: ${config.minYear}+`);
+      try {
+        // Wait for filter inputs to be available (they might load dynamically)
+        await page.waitForSelector('input[name="inputMin-Year"]', { timeout: 10000 });
+
+        // Find and fill the minimum year input
+        const yearInput = page.locator('input[name="inputMin-Year"]');
+        await yearInput.scrollIntoViewIfNeeded();
+        await yearInput.click();
+        await yearInput.clear();
+        await yearInput.fill(String(config.minYear));
+        await yearInput.press('Tab'); // Move focus to trigger change
+        await page.waitForTimeout(500);
+        await yearInput.press('Enter');
+
+        console.log(`Year filter applied: ${config.minYear}`);
+
+        // Wait for results to update
+        await page.waitForTimeout(3000);
+        await waitForPageStable(page);
+      } catch (error) {
+        console.log('Failed to apply year filter:', error);
+      }
+    }
 
     // Extract vehicles
     const vehicles = await extractVehiclesFromPage(page, config);
 
     console.log(`Scraped ${vehicles.length} vehicles from ${config.name}`);
     return vehicles;
+  } catch (error) {
+    console.error(`Error in scrapeUrl for ${config.name}:`, error);
+    return [];
   } finally {
     // Clean up
-    if (browser) {
-      await browser.close();
-    }
-    if (kernelBrowser) {
-      await getKernel().browsers.deleteByID(kernelBrowser.session_id);
-    }
+    try {
+      if (browser) {
+        await browser.close();
+      }
+    } catch { /* ignore cleanup errors */ }
+
+    try {
+      if (kernelBrowser) {
+        await getKernel().browsers.deleteByID(kernelBrowser.session_id);
+      }
+    } catch { /* ignore cleanup errors */ }
   }
 }
 

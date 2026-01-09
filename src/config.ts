@@ -15,11 +15,13 @@ import { WatchConfig } from "./lib/types";
 export const watchConfigs: WatchConfig[] = [
   {
     name: "Model 3 Highland",
-    url: "https://www.tesla.com/nl_NL/inventory/used/m3?INTERIOR=PREMIUM_BLACK&arrangeby=plh&zip=5708&range=0", // Replace with your filtered Tesla URL
+    url: "https://www.tesla.com/nl_NL/inventory/used/m3?INTERIOR=PREMIUM_BLACK&arrangeby=plh&zip=5708&range=0",
+    minYear: 2024, // Highland refresh started in 2024
   },
   {
     name: "Model Y 2023+",
-    url: "https://www.tesla.com/nl_NL/inventory/used/my?TRIM=MYRWD&INTERIOR=PREMIUM_BLACK&arrangeby=plh&zip=5708&range=0", // Replace with your filtered Tesla URL
+    url: "https://www.tesla.com/nl_NL/inventory/used/my?TRIM=MYRWD&INTERIOR=PREMIUM_BLACK&arrangeby=plh&zip=5708&range=0",
+    minYear: 2023,
   },
 ];
 

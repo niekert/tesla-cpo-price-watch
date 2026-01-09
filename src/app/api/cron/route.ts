@@ -6,13 +6,13 @@ export const runtime = 'nodejs';
 export const maxDuration = 300; // 5 minutes max
 
 export async function GET(request: Request) {
-  // Verify the request is from Vercel Cron (in production)
-  const authHeader = request.headers.get('authorization');
-  if (
-    process.env.NODE_ENV === 'production' &&
-    authHeader !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Verify the request is from Vercel Cron (only if CRON_SECRET is configured)
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret) {
+    const authHeader = request.headers.get('authorization');
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
   }
 
   try {

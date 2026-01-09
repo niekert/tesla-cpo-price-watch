@@ -1,8 +1,5 @@
 import { VehicleChange, PriceChange, NewArrival, VehicleRemoved } from './types';
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID!;
-
 function formatPrice(price: number, currency: string): string {
   return new Intl.NumberFormat('nl-NL', {
     style: 'currency',
@@ -22,10 +19,10 @@ function formatPriceChange(change: PriceChange): string {
 
   return `${emoji} *${title}*
 
-*${vehicle.model}* - ${vehicle.variant}
+*${vehicle.model}*
 📍 ${vehicle.location}
+📋 ${vehicle.variant}
 💰 ${formatPrice(previousPrice, vehicle.currency)} → ${formatPrice(currentPrice, vehicle.currency)} (${changeSign}${changeFormatted})
-🚗 ${vehicle.mileage.toLocaleString('nl-NL')} km
 
 [View on Tesla](${vehicle.url})`;
 }
@@ -35,10 +32,9 @@ function formatNewArrival(arrival: NewArrival): string {
 
   return `🆕 *New Vehicle Available!*
 
-*${vehicle.model}* - ${vehicle.variant}
+*${vehicle.model}*
 📍 ${vehicle.location}
-💰 ${formatPrice(vehicle.price, vehicle.currency)}
-🚗 ${vehicle.mileage.toLocaleString('nl-NL')} km
+📋 ${vehicle.variant}
 
 [View on Tesla](${vehicle.url})`;
 }
@@ -48,9 +44,9 @@ function formatRemoved(removed: VehicleRemoved): string {
 
   return `❌ *Vehicle No Longer Available*
 
-*${vehicle.model}* - ${vehicle.variant}
+*${vehicle.model}*
 📍 ${vehicle.location}
-💰 ${formatPrice(vehicle.price, vehicle.currency)}
+📋 ${vehicle.variant}
 
 _This vehicle was removed from inventory_`;
 }
@@ -68,22 +64,49 @@ function formatMessage(change: VehicleChange): string {
 }
 
 export async function sendTelegramMessage(text: string): Promise<void> {
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
-      text,
-      parse_mode: 'Markdown',
-      disable_web_page_preview: false,
-    }),
-  });
+  if (!botToken) {
+    console.error('TELEGRAM_BOT_TOKEN is not set!');
+    return;
+  }
+  if (!chatId) {
+    console.error('TELEGRAM_CHAT_ID is not set!');
+    return;
+  }
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Telegram API error: ${error}`);
+  // Validate chat ID is a number
+  if (chatId.includes(':')) {
+    console.error('TELEGRAM_CHAT_ID looks like a bot token! Chat ID should be just a number like 123456789');
+    return;
+  }
+
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: false,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      console.error('Telegram API error:', JSON.stringify(result));
+      throw new Error(`Telegram API error: ${JSON.stringify(result)}`);
+    }
+
+    console.log('Telegram message sent successfully');
+  } catch (error) {
+    console.error('Failed to send Telegram message:', error);
+    throw error;
   }
 }
 

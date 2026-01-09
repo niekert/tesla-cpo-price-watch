@@ -43,4 +43,5 @@ export type VehicleChange = PriceChange | NewArrival | VehicleRemoved;
 export interface WatchConfig {
   name: string;
   url: string;
+  minYear?: number; // Minimum year filter (e.g., 2024 for Highland, 2023 for Model Y)
 }
