@@ -17,6 +17,11 @@ function formatVehicleInfo(vehicle: { model: string; trim: string; year: number 
   return `*${vehicle.model}*\n${vehicle.trim}${yearStr}`;
 }
 
+function formatOptions(options: string[]): string {
+  if (!options || options.length === 0) return '';
+  return `\n🎨 ${options.join(' • ')}`;
+}
+
 function formatPriceChange(change: PriceChange): string {
   const { vehicle, previousPrice, currentPrice, changeAmount } = change;
   const isDropping = change.type === 'price_drop';
@@ -31,7 +36,7 @@ function formatPriceChange(change: PriceChange): string {
 ${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
 🛣️ ${formatMileage(vehicle.mileage)} km
-💰 ${formatPrice(previousPrice, vehicle.currency)} → ${formatPrice(currentPrice, vehicle.currency)} (${changeSign}${changeFormatted})
+💰 ${formatPrice(previousPrice, vehicle.currency)} → ${formatPrice(currentPrice, vehicle.currency)} (${changeSign}${changeFormatted})${formatOptions(vehicle.options)}
 
 [View on Tesla](${vehicle.url})`;
 }
@@ -44,7 +49,7 @@ function formatNewArrival(arrival: NewArrival): string {
 ${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
 💰 ${formatPrice(vehicle.price, vehicle.currency)}
-🛣️ ${formatMileage(vehicle.mileage)} km
+🛣️ ${formatMileage(vehicle.mileage)} km${formatOptions(vehicle.options)}
 
 [View on Tesla](${vehicle.url})`;
 }
@@ -57,7 +62,7 @@ function formatRemoved(removed: VehicleRemoved): string {
 ${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
 💰 ${formatPrice(vehicle.price, vehicle.currency)}
-🛣️ ${formatMileage(vehicle.mileage)} km
+🛣️ ${formatMileage(vehicle.mileage)} km${formatOptions(vehicle.options)}
 
 _This vehicle was removed from inventory_`;
 }
@@ -70,7 +75,7 @@ function formatAvailabilityChange(change: AvailabilityChange): string {
 ${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
 💰 ${formatPrice(vehicle.price, vehicle.currency)}
-🛣️ ${formatMileage(vehicle.mileage)} km
+🛣️ ${formatMileage(vehicle.mileage)} km${formatOptions(vehicle.options)}
 
 _Was "Binnenkort op te halen", now ready!_
 

@@ -13,6 +13,7 @@ function makeVehicle(overrides: Partial<Vehicle> = {}): Vehicle {
     mileage: 10000,
     location: 'Nu op te halen in Amsterdam',
     url: 'https://tesla.com/...',
+    options: [],
     ...overrides,
   };
 }

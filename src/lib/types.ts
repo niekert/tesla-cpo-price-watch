@@ -8,6 +8,7 @@ export interface Vehicle {
   mileage: number;
   location: string;
   url: string;
+  options: string[]; // Paint, wheels, interior, extras from tooltip
 }
 
 export interface StoredVehicle extends Vehicle {

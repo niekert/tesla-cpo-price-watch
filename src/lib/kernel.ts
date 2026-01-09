@@ -6,6 +6,7 @@ import {
   dismissOverlays,
   applyYearFilter,
 } from "./scraper";
+import { sendErrorMessage } from "./telegram";
 import { Vehicle, WatchConfig } from "./types";
 
 // Lazy initialize Kernel client to avoid build-time errors
@@ -66,6 +67,7 @@ async function extractVehiclesFromPage(
             mileage: v.mileage,
             location: v.location,
             url: v.url,
+            options: v.options,
           })
         );
       }
@@ -138,7 +140,7 @@ export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
     return vehicles;
   } catch (error) {
     console.error(`Error in scrapeUrl for ${config.name}:`, error);
-    return [];
+    throw error;
   } finally {
     // Clean up
     try {
@@ -163,6 +165,7 @@ export async function scrapeAllUrls(
   configs: WatchConfig[]
 ): Promise<Vehicle[]> {
   const allVehicles: Vehicle[] = [];
+  const errors: { config: WatchConfig; error: unknown }[] = [];
 
   // Scrape sequentially to avoid overwhelming the service
   for (const config of configs) {
@@ -171,7 +174,26 @@ export async function scrapeAllUrls(
       allVehicles.push(...vehicles);
     } catch (error) {
       console.error(`Error scraping ${config.name}:`, error);
+      errors.push({ config, error });
       // Continue with other URLs even if one fails
+    }
+  }
+
+  // Send Telegram notification if any scraping failed
+  if (errors.length > 0) {
+    const errorMessages = errors
+      .map((e) => `${e.config.name}: ${e.error instanceof Error ? e.error.message : String(e.error)}`)
+      .join("\n");
+
+    try {
+      await sendErrorMessage(`Scraping failed for ${errors.length}/${configs.length} URLs:\n\n${errorMessages}`);
+    } catch {
+      console.error("Failed to send error notification to Telegram");
+    }
+
+    // If all URLs failed, throw to stop the workflow
+    if (errors.length === configs.length) {
+      throw new Error(`All scraping failed: ${errorMessages}`);
     }
   }
 

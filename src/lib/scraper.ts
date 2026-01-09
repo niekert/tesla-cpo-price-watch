@@ -11,6 +11,7 @@ export interface ScrapedVehicle {
   year: number | null;
   currency: string;
   url: string;
+  options: string[]; // Paint, wheels, interior, extras from tooltip
 }
 
 // This function runs in browser context (page.evaluate)
@@ -61,6 +62,19 @@ export function extractVehiclesFromDOM(): ScrapedVehicle[] {
     const yearMatch = details.match(/\b(20[12]\d)\b/);
     const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
 
+    // Extract options from tooltip
+    const options: string[] = [];
+    const tooltip = card.querySelector(".tds-tooltip .feature-list-tooltip");
+    if (tooltip) {
+      const optionItems = tooltip.querySelectorAll(".feature-list-item .option-description span");
+      for (const item of optionItems) {
+        const text = item.textContent?.trim();
+        if (text) {
+          options.push(text);
+        }
+      }
+    }
+
     // Determine URL based on current page URL
     const isModelY = window.location.href.includes("/my") || window.location.href.includes("/model-y");
     const modelPath = isModelY ? "my" : "m3";
@@ -75,6 +89,7 @@ export function extractVehiclesFromDOM(): ScrapedVehicle[] {
       year,
       currency: "EUR",
       url,
+      options,
     });
   }
 
