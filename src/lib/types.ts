@@ -1,13 +1,13 @@
 export interface Vehicle {
   vin: string;
-  model: string;
-  variant: string;
+  model: string; // "Model 3" or "Model Y" from watchConfig.name
+  trim: string; // Trim name from page, e.g., "Long Range AWD"
+  year: number | null;
   price: number;
   currency: string;
   mileage: number;
   location: string;
   url: string;
-  imageUrl?: string;
 }
 
 export interface StoredVehicle extends Vehicle {

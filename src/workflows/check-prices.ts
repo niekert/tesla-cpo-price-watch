@@ -21,10 +21,10 @@ async function compareWithStored(vehicles: Vehicle[]): Promise<VehicleChange[]> 
   return changes;
 }
 
-async function notifyChanges(changes: VehicleChange[]): Promise<void> {
+async function notifyChanges(changes: VehicleChange[], vehicleCount: number): Promise<void> {
   'use step';
   if (changes.length === 0) {
-    console.log('No changes to notify');
+    console.log(`✓ All ${vehicleCount} vehicles checked - no price changes detected`);
     return;
   }
   console.log(`Sending ${changes.length} notifications...`);
@@ -67,7 +67,7 @@ export async function checkPricesWorkflow(): Promise<{ vehicleCount: number; cha
     const changes = await compareWithStored(vehicles);
 
     // Step 3: Send notifications for any changes
-    await notifyChanges(changes);
+    await notifyChanges(changes, vehicles.length);
 
     // Step 4: Update stored prices
     await persistPrices(vehicles);

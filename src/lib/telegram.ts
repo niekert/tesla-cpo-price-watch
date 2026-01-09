@@ -8,6 +8,15 @@ function formatPrice(price: number, currency: string): string {
   }).format(price);
 }
 
+function formatMileage(mileage: number): string {
+  return new Intl.NumberFormat('nl-NL').format(mileage);
+}
+
+function formatVehicleInfo(vehicle: { model: string; trim: string; year: number | null }): string {
+  const yearStr = vehicle.year ? ` (${vehicle.year})` : '';
+  return `*${vehicle.model}*\n${vehicle.trim}${yearStr}`;
+}
+
 function formatPriceChange(change: PriceChange): string {
   const { vehicle, previousPrice, currentPrice, changeAmount } = change;
   const isDropping = change.type === 'price_drop';
@@ -19,9 +28,9 @@ function formatPriceChange(change: PriceChange): string {
 
   return `${emoji} *${title}*
 
-*${vehicle.model}*
+${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
-📋 ${vehicle.variant}
+🛣️ ${formatMileage(vehicle.mileage)} km
 💰 ${formatPrice(previousPrice, vehicle.currency)} → ${formatPrice(currentPrice, vehicle.currency)} (${changeSign}${changeFormatted})
 
 [View on Tesla](${vehicle.url})`;
@@ -32,9 +41,10 @@ function formatNewArrival(arrival: NewArrival): string {
 
   return `🆕 *New Vehicle Available!*
 
-*${vehicle.model}*
+${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
-📋 ${vehicle.variant}
+💰 ${formatPrice(vehicle.price, vehicle.currency)}
+🛣️ ${formatMileage(vehicle.mileage)} km
 
 [View on Tesla](${vehicle.url})`;
 }
@@ -44,9 +54,10 @@ function formatRemoved(removed: VehicleRemoved): string {
 
   return `❌ *Vehicle No Longer Available*
 
-*${vehicle.model}*
+${formatVehicleInfo(vehicle)}
 📍 ${vehicle.location}
-📋 ${vehicle.variant}
+💰 ${formatPrice(vehicle.price, vehicle.currency)}
+🛣️ ${formatMileage(vehicle.mileage)} km
 
 _This vehicle was removed from inventory_`;
 }

@@ -1,7 +1,12 @@
-import Kernel from '@onkernel/sdk';
-import { chromium, Page } from 'playwright';
-import { Vehicle, WatchConfig } from './types';
-import { extractVehiclesFromDOM, ScrapedVehicle } from './scraper';
+import Kernel from "@onkernel/sdk";
+import { chromium, Page } from "playwright";
+import {
+  extractVehiclesFromDOM,
+  ScrapedVehicle,
+  dismissOverlays,
+  applyYearFilter,
+} from "./scraper";
+import { Vehicle, WatchConfig } from "./types";
 
 // Lazy initialize Kernel client to avoid build-time errors
 let _kernel: Kernel | null = null;
@@ -14,20 +19,6 @@ function getKernel(): Kernel {
   return _kernel;
 }
 
-interface TeslaInventoryItem {
-  VIN: string;
-  Model: string;
-  TrimName: string;
-  Price: number;
-  Odometer: number;
-  City: string;
-  StateProvince?: string;
-  Country?: string;
-  InventoryPrice: number;
-  Currency: string;
-  VehicleDetailUrl?: string;
-}
-
 async function waitForPageStable(page: Page, timeout = 10000): Promise<void> {
   const startTime = Date.now();
   let lastContent = 0;
@@ -35,7 +26,9 @@ async function waitForPageStable(page: Page, timeout = 10000): Promise<void> {
   while (Date.now() - startTime < timeout) {
     await page.waitForTimeout(500);
     try {
-      const currentContent = await page.evaluate(() => document.body?.innerHTML?.length || 0);
+      const currentContent = await page.evaluate(
+        () => document.body?.innerHTML?.length || 0
+      );
       if (currentContent === lastContent && currentContent > 1000) {
         // Page content stabilized
         return;
@@ -48,23 +41,33 @@ async function waitForPageStable(page: Page, timeout = 10000): Promise<void> {
   }
 }
 
-async function extractVehiclesFromPage(page: Page, config: WatchConfig): Promise<Vehicle[]> {
+async function extractVehiclesFromPage(
+  page: Page,
+  config: WatchConfig
+): Promise<Vehicle[]> {
   // Wait for page to stabilize after any redirects/navigation
   await waitForPageStable(page);
 
-  // Try multiple extraction methods with retries
+  // Try DOM scraping with retries
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      // Method 1: Try to intercept network response (most reliable)
-      const vehicles = await tryExtractFromPageState(page, config);
-      if (vehicles.length > 0) {
-        return vehicles;
-      }
+      const scraped = await page.evaluate(extractVehiclesFromDOM);
 
-      // Method 2: Try DOM scraping
-      const domVehicles = await tryExtractFromDOM(page);
-      if (domVehicles.length > 0) {
-        return domVehicles;
+      if (scraped.length > 0) {
+        // Convert ScrapedVehicle to Vehicle
+        return scraped.map(
+          (v: ScrapedVehicle): Vehicle => ({
+            vin: v.vin,
+            model: config.name,
+            trim: v.trim,
+            year: v.year,
+            price: v.price,
+            currency: v.currency,
+            mileage: v.mileage,
+            location: v.location,
+            url: v.url,
+          })
+        );
       }
 
       // Wait before retry
@@ -76,114 +79,6 @@ async function extractVehiclesFromPage(page: Page, config: WatchConfig): Promise
   }
 
   return [];
-}
-
-async function tryExtractFromPageState(page: Page, config: WatchConfig): Promise<Vehicle[]> {
-  const inventoryData = await page.evaluate(() => {
-    // Tesla stores inventory in various places
-    const win = window as unknown as Record<string, unknown>;
-
-    // Check common Tesla data stores
-    if (win.__PRELOADED_STATE__) return win.__PRELOADED_STATE__;
-    if (win.__ds_state__) return win.__ds_state__;
-    if (win.__NEXT_DATA__) return win.__NEXT_DATA__;
-
-    // Look for JSON in script tags
-    const scripts = document.querySelectorAll('script:not([src])');
-    for (const script of scripts) {
-      const content = script.textContent || '';
-      if (content.includes('"VIN"') && content.includes('"results"')) {
-        try {
-          const match = content.match(/\{[^{}]*"results"\s*:\s*\[[^\]]*\][^{}]*\}/);
-          if (match) return JSON.parse(match[0]);
-        } catch { /* continue */ }
-      }
-    }
-
-    return null;
-  });
-
-  if (!inventoryData) return [];
-
-  const results = extractResults(inventoryData);
-  return results.map(item => parseVehicle(item, config));
-}
-
-async function tryExtractFromDOM(page: Page): Promise<Vehicle[]> {
-  // Pass the function source to evaluate - it runs in browser context
-  const scraped = await page.evaluate(extractVehiclesFromDOM);
-
-  // Convert ScrapedVehicle to Vehicle (add variant field)
-  return scraped.map((v: ScrapedVehicle): Vehicle => ({
-    vin: v.vin,
-    model: v.model,
-    variant: v.year ? `${v.year}` : v.model,
-    price: v.price,
-    currency: v.currency,
-    mileage: v.mileage,
-    location: v.location,
-    url: v.url,
-  }));
-}
-
-function extractResults(data: unknown): TeslaInventoryItem[] {
-  if (!data || typeof data !== 'object') return [];
-
-  const obj = data as Record<string, unknown>;
-
-  // Try common Tesla data structures
-  if (Array.isArray(obj.results)) {
-    return obj.results as TeslaInventoryItem[];
-  }
-
-  if (obj.inventory && typeof obj.inventory === 'object') {
-    const inv = obj.inventory as Record<string, unknown>;
-    if (Array.isArray(inv.results)) {
-      return inv.results as TeslaInventoryItem[];
-    }
-  }
-
-  if (obj.DSServices && typeof obj.DSServices === 'object') {
-    const ds = obj.DSServices as Record<string, unknown>;
-    if (ds.InventoryListService && typeof ds.InventoryListService === 'object') {
-      const ils = ds.InventoryListService as Record<string, unknown>;
-      if (Array.isArray(ils.results)) {
-        return ils.results as TeslaInventoryItem[];
-      }
-    }
-  }
-
-  // Recursively search for results array
-  for (const value of Object.values(obj)) {
-    if (Array.isArray(value) && value.length > 0 && value[0]?.VIN) {
-      return value as TeslaInventoryItem[];
-    }
-    if (typeof value === 'object' && value !== null) {
-      const results = extractResults(value);
-      if (results.length > 0) return results;
-    }
-  }
-
-  return [];
-}
-
-function parseVehicle(item: TeslaInventoryItem, config: WatchConfig): Vehicle {
-  const location = [item.City, item.StateProvince, item.Country]
-    .filter(Boolean)
-    .join(', ');
-
-  return {
-    vin: item.VIN,
-    model: item.Model || config.name,
-    variant: item.TrimName || 'Unknown',
-    price: item.InventoryPrice || item.Price,
-    currency: item.Currency || 'EUR',
-    mileage: item.Odometer || 0,
-    location,
-    url: item.VehicleDetailUrl
-      ? `https://www.tesla.com${item.VehicleDetailUrl}`
-      : `https://www.tesla.com/inventory/used/${item.VIN}`,
-  };
 }
 
 export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
@@ -210,64 +105,36 @@ export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
     // Navigate to Tesla inventory
     console.log(`Navigating to ${config.url}`);
     await page.goto(config.url, {
-      waitUntil: 'domcontentloaded',
+      waitUntil: "networkidle",
       timeout: 60000,
     });
 
     // Wait for initial load
     await page.waitForTimeout(3000);
 
-    // Dismiss cookie banner if present
-    try {
-      const acceptButton = page.locator('button:has-text("Accepteren")');
-      if (await acceptButton.count() > 0) {
-        console.log('Dismissing cookie banner...');
-        await acceptButton.click();
-        await page.waitForTimeout(1000);
-      }
-    } catch { /* ignore */ }
+    // Dismiss cookie banner and locale modal
+    await dismissOverlays(page);
 
-    // Dismiss locale modal by pressing Escape
-    try {
-      const dialog = page.locator('dialog');
-      if (await dialog.count() > 0 && await dialog.isVisible()) {
-        console.log('Dismissing locale modal...');
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(1000);
-      }
-    } catch { /* ignore */ }
-
-    // Apply year filter if configured
+    // Apply year filter if configured (required - fail if can't apply)
     if (config.minYear) {
-      console.log(`Applying year filter: ${config.minYear}+`);
-      try {
-        // Wait for filter inputs to be available (they might load dynamically)
-        await page.waitForSelector('input[name="inputMin-Year"]', { timeout: 10000 });
-
-        // Find and fill the minimum year input
-        const yearInput = page.locator('input[name="inputMin-Year"]');
-        await yearInput.scrollIntoViewIfNeeded();
-        await yearInput.click();
-        await yearInput.clear();
-        await yearInput.fill(String(config.minYear));
-        await yearInput.press('Tab'); // Move focus to trigger change
-        await page.waitForTimeout(500);
-        await yearInput.press('Enter');
-
-        console.log(`Year filter applied: ${config.minYear}`);
-
-        // Wait for results to update
-        await page.waitForTimeout(3000);
-        await waitForPageStable(page);
-      } catch (error) {
-        console.log('Failed to apply year filter:', error);
-      }
+      await applyYearFilter(page, config.minYear);
+      await waitForPageStable(page);
     }
 
     // Extract vehicles
     const vehicles = await extractVehiclesFromPage(page, config);
 
-    console.log(`Scraped ${vehicles.length} vehicles from ${config.name}`);
+    // Log structured output for cron logs
+    console.log(
+      `\n--- Scraped ${vehicles.length} vehicles from ${config.name} ---`
+    );
+    for (const v of vehicles) {
+      const yearStr = v.year ? ` (${v.year})` : "";
+      console.log(
+        `  ${v.trim}${yearStr} | €${v.price.toLocaleString("nl-NL")} | ${v.mileage.toLocaleString("nl-NL")} km | ${v.location} | ${v.vin}`
+      );
+    }
+
     return vehicles;
   } catch (error) {
     console.error(`Error in scrapeUrl for ${config.name}:`, error);
@@ -278,17 +145,23 @@ export async function scrapeUrl(config: WatchConfig): Promise<Vehicle[]> {
       if (browser) {
         await browser.close();
       }
-    } catch { /* ignore cleanup errors */ }
+    } catch {
+      /* ignore cleanup errors */
+    }
 
     try {
       if (kernelBrowser) {
         await getKernel().browsers.deleteByID(kernelBrowser.session_id);
       }
-    } catch { /* ignore cleanup errors */ }
+    } catch {
+      /* ignore cleanup errors */
+    }
   }
 }
 
-export async function scrapeAllUrls(configs: WatchConfig[]): Promise<Vehicle[]> {
+export async function scrapeAllUrls(
+  configs: WatchConfig[]
+): Promise<Vehicle[]> {
   const allVehicles: Vehicle[] = [];
 
   // Scrape sequentially to avoid overwhelming the service

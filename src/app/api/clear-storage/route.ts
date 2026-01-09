@@ -1,7 +1,18 @@
 import { Redis } from '@upstash/redis';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  // Require secret for protection
+  const secret = process.env.ADMIN_SECRET;
+  if (!secret) {
+    return NextResponse.json({ error: 'ADMIN_SECRET not configured' }, { status: 500 });
+  }
+
+  const authHeader = request.headers.get('authorization');
+  if (authHeader !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const redis = new Redis({
     url: process.env.KV_REST_API_URL!,
     token: process.env.KV_REST_API_TOKEN!,

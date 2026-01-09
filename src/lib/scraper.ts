@@ -1,8 +1,10 @@
-// Shared DOM scraping logic - used by both kernel.ts and debug scripts
+// Shared scraping logic - used by both kernel.ts and debug scripts
+
+import { Page } from "playwright";
 
 export interface ScrapedVehicle {
   vin: string;
-  model: string;
+  trim: string; // Trim name from page, e.g., "Long Range AWD"
   location: string;
   price: number;
   mileage: number;
@@ -29,9 +31,9 @@ export function extractVehiclesFromDOM(): ScrapedVehicle[] {
     if (vin.length !== 17 || seenVins.has(vin)) continue;
     seenVins.add(vin);
 
-    // Extract model from heading element
-    const modelEl = card.querySelector('h3, h2, [class*="result-title"]');
-    const model = modelEl?.textContent?.trim() || "Tesla";
+    // Extract trim from the trim-name element
+    const trimEl = card.querySelector(".trim-name, .tds-text--h4.trim-name");
+    const trim = trimEl?.textContent?.trim() || "Unknown";
 
     // Extract location from .inventory-card-chip
     const locationEl = card.querySelector(".inventory-card-chip");
@@ -59,14 +61,14 @@ export function extractVehiclesFromDOM(): ScrapedVehicle[] {
     const yearMatch = details.match(/\b(20[12]\d)\b/);
     const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
 
-    // Determine URL based on model
-    const isModelY = model.toLowerCase().includes("model y");
+    // Determine URL based on current page URL
+    const isModelY = window.location.href.includes("/my") || window.location.href.includes("/model-y");
     const modelPath = isModelY ? "my" : "m3";
     const url = `https://www.tesla.com/nl_NL/${modelPath}/order/${vin}`;
 
     vehicles.push({
       vin,
-      model,
+      trim,
       location,
       price,
       mileage,
@@ -79,6 +81,48 @@ export function extractVehiclesFromDOM(): ScrapedVehicle[] {
   return vehicles;
 }
 
-// String version of the function for use with page.evaluate()
-// This is necessary because page.evaluate() serializes the function
-export const extractVehiclesFromDOMString = extractVehiclesFromDOM.toString();
+// Dismiss cookie banner and locale modal
+export async function dismissOverlays(page: Page): Promise<void> {
+  // Dismiss cookie banner if present (wait up to 5s for it to appear)
+  console.log("Waiting for cookie banner...");
+  try {
+    const acceptButton = page.locator('button:has-text("Accepteren")');
+    await acceptButton.waitFor({ state: "visible", timeout: 5000 });
+    console.log("Cookie banner found, clicking accept...");
+    await acceptButton.click();
+    await page.waitForTimeout(1000);
+  } catch {
+    console.log("No cookie banner appeared within 5s");
+  }
+
+  // Dismiss locale modal by pressing Escape (wait up to 5s for it to appear)
+  console.log("Waiting for locale modal...");
+  try {
+    const dialog = page.locator("dialog.dx-mega-menu-panel");
+    await dialog.waitFor({ state: "visible", timeout: 5000 });
+    console.log("Locale modal found, pressing Escape...");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(1000);
+  } catch {
+    console.log("No locale modal appeared within 5s");
+  }
+}
+
+// Apply year filter
+export async function applyYearFilter(page: Page, minYear: number): Promise<void> {
+  console.log(`Applying year filter: ${minYear}+`);
+
+  await page.waitForSelector('input[name="inputMin-Year"]', { timeout: 10000 });
+
+  const yearInput = page.locator('input[name="inputMin-Year"]');
+  await yearInput.scrollIntoViewIfNeeded();
+  await yearInput.click();
+  await yearInput.clear();
+  await yearInput.fill(String(minYear));
+  await yearInput.press("Tab");
+  await page.waitForTimeout(500);
+  await yearInput.press("Enter");
+
+  console.log(`Year filter applied: ${minYear}`);
+  await page.waitForTimeout(3000);
+}

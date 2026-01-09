@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:clear": "bun scripts/db-clear.ts"
   },
   "dependencies": {
     "@onkernel/sdk": "^0.25.0",
