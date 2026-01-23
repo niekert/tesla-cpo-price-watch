@@ -1,12 +1,11 @@
 import Kernel from "@onkernel/sdk";
 import { chromium, Page } from "playwright";
 import {
+  applyYearFilter,
+  dismissOverlays,
   extractVehiclesFromDOM,
   ScrapedVehicle,
-  dismissOverlays,
-  applyYearFilter,
 } from "./scraper";
-import { sendErrorMessage } from "./telegram";
 import { Vehicle, WatchConfig } from "./types";
 
 // Lazy initialize Kernel client to avoid build-time errors
@@ -191,7 +190,7 @@ export async function scrapeAllUrls(
       .join("\n");
 
     try {
-      await sendErrorMessage(`Scraping failed for ${errors.length}/${configs.length} URLs:\n\n${errorMessages}`);
+      // await sendErrorMessage(`Scraping failed for ${errors.length}/${configs.length} URLs:\n\n${errorMessages}`);
     } catch {
       console.error("Failed to send error notification to Telegram");
     }
